@@ -1,0 +1,259 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  phone        String?
+  role         String   @default("STUDENT") // STUDENT | STAFF | ADMIN
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  orders          Order[]
+  cartItems       CartItem[]
+  notifications   Notification[]
+  reviews         Review[]
+  accountRequests AccountRequest[]
+
+  @@index([email])
+  @@index([role])
+}
+
+// Account registration approval workflow
+model AccountRequest {
+  id          String   @id @default(uuid())
+  name        String
+  email       String
+  phone       String?
+  passwordHash String
+  requestedRole String  @default("STUDENT") // STUDENT | STAFF | ADMIN
+  status      String   @default("PENDING")  // PENDING | APPROVED | REJECTED
+  rejectionReason String?
+  reviewedById String?
+  reviewedAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  reviewedBy User? @relation(fields: [reviewedById], references: [id])
+
+  @@index([status])
+  @@index([email])
+}
+
+model MenuCategory {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  imageUrl    String?
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  menuItems MenuItem[]
+}
+
+model MenuItem {
+  id               String   @id @default(uuid())
+  name             String
+  description      String?
+  price            Float
+  imageUrl         String?
+  categoryId       String
+  isVegetarian     Boolean  @default(false)
+  isAvailable      Boolean  @default(true)
+  stockQuantity    Int      @default(100)
+  preparationMins  Int      @default(10)
+  allergyInfo      String?
+  sortOrder        Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  category             MenuCategory           @relation(fields: [categoryId], references: [id])
+  cartItems            CartItem[]
+  orderItems           OrderItem[]
+  inventoryTransactions InventoryTransaction[]
+
+  @@index([categoryId])
+  @@index([isAvailable])
+}
+
+model InventoryTransaction {
+  id         String   @id @default(uuid())
+  menuItemId String
+  quantity   Int      // positive = restock, negative = deduction
+  reason     String   // ORDER | MANUAL | RESTOCK | CANCEL
+  note       String?
+  createdAt  DateTime @default(now())
+
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id])
+
+  @@index([menuItemId])
+}
+
+model CartItem {
+  id         String   @id @default(uuid())
+  userId     String
+  menuItemId String
+  quantity   Int      @default(1)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id])
+
+  @@unique([userId, menuItemId])
+  @@index([userId])
+}
+
+model PickupSlot {
+  id            String   @id @default(uuid())
+  label         String   // e.g. "12:00 PM - 12:15 PM"
+  startTime     String   // HH:MM
+  endTime       String   // HH:MM
+  maxOrders     Int      @default(10)
+  isActive      Boolean  @default(true)
+  dayOfWeek     Int?     // 0=Sun..6=Sat, null=every day
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  orders Order[]
+}
+
+model Order {
+  id              String   @id @default(uuid())
+  orderNumber     String   @unique
+  userId          String
+  pickupSlotId    String
+  status          String   @default("PLACED") // PLACED|CONFIRMED|PREPARING|READY|COMPLETED|CANCELLED
+  paymentMethod   String   @default("CASH")   // CASH|ONLINE
+  paymentStatus   String   @default("PENDING") // PENDING|PAID|FAILED|REFUNDED
+  paymentRef      String?
+  subtotal        Float
+  tax             Float    @default(0)
+  discount        Float    @default(0)
+  total           Float
+  notes           String?
+  scheduledDate   String   // YYYY-MM-DD
+  cancelReason    String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user         User              @relation(fields: [userId], references: [id])
+  pickupSlot   PickupSlot        @relation(fields: [pickupSlotId], references: [id])
+  items        OrderItem[]
+  token        QueueToken?
+  payment      Payment?
+  statusHistory OrderStatusHistory[]
+  notifications Notification[]
+  review        Review?
+
+  @@index([userId])
+  @@index([status])
+  @@index([scheduledDate])
+  @@index([orderNumber])
+}
+
+model OrderItem {
+  id         String   @id @default(uuid())
+  orderId    String
+  menuItemId String
+  name       String   // snapshot
+  price      Float    // snapshot
+  quantity   Int
+  createdAt  DateTime @default(now())
+
+  order    Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id])
+
+  @@index([orderId])
+}
+
+model QueueToken {
+  id          String   @id @default(uuid())
+  orderId     String   @unique
+  tokenNumber Int
+  scope       String   // date string YYYY-MM-DD for uniqueness scope
+  isActive    Boolean  @default(true)
+  calledAt    DateTime?
+  createdAt   DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([tokenNumber, scope])
+  @@index([scope])
+}
+
+model Payment {
+  id           String   @id @default(uuid())
+  orderId      String   @unique
+  amount       Float
+  method       String   // CASH | ONLINE
+  status       String   @default("PENDING") // PENDING|PAID|FAILED|REFUNDED
+  transactionRef String?
+  paidAt       DateTime?
+  refundedAt   DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+}
+
+model OrderStatusHistory {
+  id        String   @id @default(uuid())
+  orderId   String
+  status    String
+  note      String?
+  createdAt DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  orderId   String?
+  type      String   // ORDER_PLACED|ORDER_CONFIRMED|PREPARING|READY|COMPLETED|CANCELLED|NEW_ORDER
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  order Order? @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+}
+
+model Review {
+  id         String   @id @default(uuid())
+  orderId    String   @unique
+  userId     String
+  rating     Int      // 1-5
+  comment    String?
+  isHidden   Boolean  @default(false)
+  moderatedAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id])
+  user  User  @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([rating])
+}
